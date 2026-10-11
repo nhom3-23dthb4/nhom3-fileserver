@@ -7,4 +7,10 @@ public enum ErrorCode {
 
     public final int code;
     ErrorCode(int code) { this.code = code; }
+
+    /** Doi so nguyen (nhan tu server) thanh ErrorCode; ma la -> INTERNAL. */
+    public static ErrorCode of(int code) {
+        for (ErrorCode e : values()) if (e.code == code) return e;
+        return INTERNAL;
+    }
 }
