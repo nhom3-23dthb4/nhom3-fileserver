@@ -1,0 +1,22 @@
+# Build
+target/
+bin/
+*.class
+*.jar
+*.zip
+# IDE
+.idea/
+.vscode/
+*.iml
+.classpath
+.project
+.settings/
+# Runtime / secrets
+logs/
+storage-root/
+*.jks
+*.p12
+*.pfx
+.env
+nbproject/private/
+nb-configuration.xml
