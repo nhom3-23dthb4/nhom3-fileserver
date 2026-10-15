@@ -11,6 +11,7 @@ import java.nio.file.Path;
 import java.security.SecureRandom;
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.function.LongSupplier;
 
 /**
  * Dang nhap + phien. File nguoi dung (moi dong, ngan cach bang TAB):
@@ -28,8 +29,15 @@ public final class AuthServiceImpl implements AuthService, UserDirectory {
     private final Map<String, int[]> fails = new ConcurrentHashMap<>();     // user -> {soLanSai}
     private final Map<String, Long> lockedUntil = new ConcurrentHashMap<>();
     private final SecureRandom random = new SecureRandom();
+    private final LongSupplier clock;                                        // nguon thoi gian (ms), de test duoc het han
 
     public AuthServiceImpl(Path usersFile) throws IOException {
+        this(usersFile, System::currentTimeMillis);
+    }
+
+    /** Dung dong ho tuy chinh de test phien het han ma khong phai cho 30 phut that. */
+    public AuthServiceImpl(Path usersFile, LongSupplier clock) throws IOException {
+        this.clock = clock;
         for (String line : Files.readAllLines(usersFile, StandardCharsets.UTF_8)) {
             if (line.isBlank() || line.startsWith("#")) continue;
             String[] f = line.split("\t", -1);
@@ -47,7 +55,7 @@ public final class AuthServiceImpl implements AuthService, UserDirectory {
     }
 
     @Override public Optional<Session> login(String userId, String password) {
-        long now = System.currentTimeMillis();
+        long now = clock.getAsLong();
         if (lockedUntil.getOrDefault(userId, 0L) > now) return Optional.empty();   // dang bi khoa tam
         User u = users.get(userId);
         char[] pw = password.toCharArray();
@@ -72,7 +80,7 @@ public final class AuthServiceImpl implements AuthService, UserDirectory {
     @Override public Optional<Session> resolve(String token) {
         Session s = sessions.get(token);
         if (s == null) return Optional.empty();
-        long now = System.currentTimeMillis();
+        long now = clock.getAsLong();
         if (now - lastSeen.getOrDefault(token, 0L) > IDLE_MS) { logout(token); return Optional.empty(); }
         lastSeen.put(token, now);
         return Optional.of(s);
