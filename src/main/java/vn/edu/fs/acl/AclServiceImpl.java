@@ -10,8 +10,10 @@ import java.nio.file.Path;
 import java.util.*;
 
 /**
- * Doc luat ACL tu file (TAB): path  principal  ALLOW|DENY  PERM1,PERM2
- * Thuat toan quyet dinh isAllowed duoc cai dat o B6 (#13).
+ * Thuat toan: (1) admin -> cho phep. (2) gom rule khop user/nhom + khop duong dan theo TUNG THANH PHAN
+ * + co quyen can hoi. (3) lay nhom rule co path DAI NHAT (cu the nhat); trong nhom do DENY thang ALLOW.
+ * (4) khong co rule -> tu choi.
+ * File acl (TAB): path  principal  ALLOW|DENY  PERM1,PERM2
  */
 public final class AclServiceImpl implements AclService {
     private final List<AclRule> rules;
@@ -34,8 +36,34 @@ public final class AclServiceImpl implements AclService {
         return out;
     }
 
-    // B6 (#13) se cai dat that. Tam thoi tu choi het (an toan: mac dinh tu choi).
     @Override public boolean isAllowed(String userId, String path, Permission p) {
-        return false;
+        if (dir.isAdmin(userId)) return true;
+        Set<String> who = new HashSet<>();
+        who.add("user:" + userId);
+        for (String g : dir.groupsOf(userId)) who.add("group:" + g);
+
+        int bestDepth = -1;
+        boolean allow = false, deny = false;
+        for (AclRule r : rules) {
+            if (!who.contains(r.principal()) || !r.perms().contains(p) || !isPrefix(r.path(), path)) continue;
+            int depth = depth(r.path());
+            if (depth > bestDepth) { bestDepth = depth; allow = false; deny = false; }
+            if (depth == bestDepth) { if (r.deny()) deny = true; else allow = true; }
+        }
+        return bestDepth >= 0 && allow && !deny;
+    }
+
+    /** "/projects" la tien to cua "/projects" va "/projects/a" nhung KHONG phai "/projects-old". */
+    static boolean isPrefix(String prefix, String path) {
+        if (prefix.equals("/")) return true;
+        if (prefix.endsWith("/")) prefix = prefix.substring(0, prefix.length() - 1);
+        return path.equals(prefix) || path.startsWith(prefix + "/");
+    }
+
+    static int depth(String prefix) {
+        if (prefix.equals("/")) return 0;
+        int n = 0;
+        for (char c : prefix.toCharArray()) if (c == '/') n++;
+        return n;
     }
 }
