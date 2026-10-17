@@ -4,8 +4,11 @@ import vn.edu.fs.common.*;
 
 import java.io.*;
 import java.nio.file.*;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.HexFormat;
 import java.util.List;
 import java.util.function.Supplier;
 
@@ -13,10 +16,17 @@ import java.util.function.Supplier;
 public final class FileServiceImpl implements FileService {
 
     private static final int BUF = 32 * 1024;                         // 32 KB moi khoi
+    private static final long DEFAULT_MAX_BYTES = 1L << 30;           // 1 GiB
     private final LockManager locks;
+    private final long maxBytes;
+
+    public FileServiceImpl(LockManager locks, long maxBytes) {
+        this.locks = locks;
+        this.maxBytes = maxBytes;
+    }
 
     public FileServiceImpl(LockManager locks) {
-        this.locks = locks;
+        this(locks, DEFAULT_MAX_BYTES);
     }
 
     public FileServiceImpl() {                                        // giu cho test cua Nhan van chay
@@ -82,10 +92,23 @@ public final class FileServiceImpl implements FileService {
         }
     }
 
-    /** Ghi vao ten.part duoi khoa ghi, xong moi doi ten nguyen tu. (SHA-256 + gioi han: C5.) */
+    /**
+     * Ghi vao ten.part duoi khoa ghi, tinh SHA-256 ngay khi nhan tung khoi, kiem tra kich thuoc + SHA
+     * roi moi doi ten nguyen tu. Sai kich thuoc/SHA hoac vuot gioi han -> xoa .part, nem FsException(TOO_LARGE)
+     * (dung hop dong FileService va ServerTest: ma 413).
+     */
     @Override public long write(Path file, InputStream in, long declaredSize, Supplier<String> expectedSha256, ChunkListener l) throws IOException {
         if (Files.isDirectory(file)) {
             throw new FsException(ErrorCode.BAD_REQUEST, "Dich la thu muc");
+        }
+        if (declaredSize > maxBytes) {                                // tu choi som
+            throw new FsException(ErrorCode.TOO_LARGE, "File qua lon");
+        }
+        MessageDigest md;
+        try {
+            md = MessageDigest.getInstance("SHA-256");
+        } catch (NoSuchAlgorithmException e) {
+            throw new IllegalStateException(e);                       // JDK nao cung co SHA-256
         }
         Path part = file.resolveSibling(file.getFileName() + ".part");
         try (LockManager.Held h = locks.write(file)) {
@@ -94,10 +117,19 @@ public final class FileServiceImpl implements FileService {
                 byte[] buf = new byte[BUF];
                 int n;
                 while ((n = in.read(buf)) != -1) {
-                    o.write(buf, 0, n);
                     total += n;
+                    if (total > maxBytes) {                           // tu choi muon: nhan qua nhieu
+                        throw new FsException(ErrorCode.TOO_LARGE, "File qua lon");
+                    }
+                    md.update(buf, 0, n);
+                    o.write(buf, 0, n);
                     l.onProgress(total, declaredSize);
                 }
+            }
+            String actual = HexFormat.of().formatHex(md.digest());
+            String expected = expectedSha256.get();
+            if (total != declaredSize || expected == null || !actual.equalsIgnoreCase(expected)) {
+                throw new FsException(ErrorCode.TOO_LARGE, "Sai kich thuoc hoac SHA-256");
             }
             Files.move(part, file, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING);
             return total;
