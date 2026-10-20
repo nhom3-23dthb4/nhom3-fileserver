@@ -4,7 +4,6 @@ import org.junit.jupiter.api.*;
 import org.junit.jupiter.api.io.TempDir;
 import vn.edu.fs.client.FileClient;
 import vn.edu.fs.common.*;
-import vn.edu.fs.dev.*;
 import vn.edu.fs.server.*;
 
 import javax.net.ssl.SSLContext;
@@ -14,7 +13,7 @@ import java.util.Random;
 
 import static org.junit.jupiter.api.Assertions.*;
 
-/** Test D1: FileClient that noi chuyen voi server that (B/C dang la ban dev tam). */
+/** Test D1: FileClient that noi chuyen voi server that (dung cac module that). */
 class FileClientTest {
     static final char[] PW = "changeit".toCharArray();
     @TempDir static Path tmp;
@@ -32,8 +31,9 @@ class FileClientTest {
         assertEquals(0, p.waitFor());
         root = Files.createDirectories(tmp.resolve("root"));
         Files.createDirectories(root.resolve("secret"));
+        TestServices sv = TestServices.create(tmp, root);
         server = new FileServer(new FileServer.Config(0, ks, PW, 10_000_000L, 5_000, 8),
-                new DevAuth(), new DevAcl(), new DevSandbox(root), new DevFileService(),
+                sv.auth, sv.acl, sv.sandbox, sv.files,
                 new AuditLogger(tmp.resolve("audit.log")));
         server.start();
         ctx = TlsConfig.clientContext(ks, PW);

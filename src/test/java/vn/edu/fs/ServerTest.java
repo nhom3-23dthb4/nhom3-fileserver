@@ -3,7 +3,6 @@ package vn.edu.fs;
 import org.junit.jupiter.api.*;
 import org.junit.jupiter.api.io.TempDir;
 import vn.edu.fs.common.*;
-import vn.edu.fs.dev.*;
 import vn.edu.fs.server.*;
 
 import javax.net.ssl.SSLContext;
@@ -16,7 +15,7 @@ import java.util.HexFormat;
 
 import static org.junit.jupiter.api.Assertions.*;
 
-/** Test tich hop cua A: server that + client TLS that, voi B/C la ban dev tam. */
+/** Test tich hop cua A: server that + client TLS that, voi dung cac module that. */
 class ServerTest {
     static final char[] PW = "changeit".toCharArray();
     @TempDir static Path tmp;
@@ -34,8 +33,9 @@ class ServerTest {
         root = Files.createDirectories(tmp.resolve("root"));
         Files.createDirectories(root.resolve("secret"));
         Files.writeString(root.resolve("hello.txt"), "xin chao");
+        TestServices sv = TestServices.create(tmp, root);
         server = new FileServer(new FileServer.Config(0, ks, PW, 10_000_000L, 5_000, 8),
-                new DevAuth(), new DevAcl(), new DevSandbox(root), new DevFileService(),
+                sv.auth, sv.acl, sv.sandbox, sv.files,
                 new AuditLogger(tmp.resolve("audit.log")));
         server.start();
     }
@@ -188,7 +188,7 @@ class ServerTest {
 
     @Test void fiveWrongLoginsCloseConnection() throws Exception {
         try (Cli c = new Cli()) {
-            for (int i = 0; i < 5; i++) assertTrue(c.cmd("LOGIN\talice\tx").startsWith("ERR\t401"));
+            for (int i = 0; i < 5; i++) assertTrue(c.cmd("LOGIN\tmallory\tx").startsWith("ERR\t401"));
             assertEquals(-1, c.in.read());
         }
     }
