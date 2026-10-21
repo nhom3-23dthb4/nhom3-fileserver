@@ -29,7 +29,6 @@ public final class FileClient implements AutoCloseable {
     private String user;
     private char[] password;
     private int reconnects;
-<<<<<<< HEAD
 
     private volatile Consumer<String> statusListener;                 // GUI hien thi "dang thu lai..."
     private volatile long retryDelayMs = 2_000;
@@ -38,8 +37,6 @@ public final class FileClient implements AutoCloseable {
 
     /** Kich thuoc va SHA-256 cua .part tren server. sha256 rong = server cu khong tra (khong doi chieu duoc). */
     public record RemotePart(long size, String sha256) {}
-=======
->>>>>>> origin/main
 
     public FileClient(String host, int port, SSLContext ctx) throws IOException {
         this.host = host;
@@ -327,7 +324,6 @@ public final class FileClient implements AutoCloseable {
         ok(readControl());                                            // ket qua cuoi cung cua WRITE
     }
 
-<<<<<<< HEAD
     /** Duong dan file tam {@code ten.part} canh file dich (de GUI biet co ban tai xuong dang do khong). */
     public static Path partFile(Path target) { return partOf(target); }
 
@@ -356,15 +352,9 @@ public final class FileClient implements AutoCloseable {
         }
     }
 
-=======
->>>>>>> origin/main
     @Override public void close() throws IOException {
         user = null;
         if (password != null) { java.util.Arrays.fill(password, '\0'); password = null; }
         socket.close();
     }
-<<<<<<< HEAD
 }
-=======
-}
->>>>>>> origin/main
