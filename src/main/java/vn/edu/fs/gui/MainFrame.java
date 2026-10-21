@@ -43,6 +43,7 @@ public class MainFrame extends JFrame {
     public MainFrame(FileClient client, String userName) {
         super("File Server – " + userName);
         this.client = client;
+        client.setStatusListener(msg -> SwingUtilities.invokeLater(() -> status.setText(msg)));   // "Mất kết nối, đang thử lại..."
         setDefaultCloseOperation(EXIT_ON_CLOSE);
         setSize(720, 480);
         setLocationRelativeTo(null);
@@ -185,13 +186,41 @@ public class MainFrame extends JFrame {
 
     // ---------------------------------------------------------------- tải lên / tải xuống
 
+    /** Hỏi người dùng khi phát hiện bản dở: 0 = tiếp tục, 1 = tải lại từ đầu, 2 = hủy. */
+    private int askResume(String title, String name, long have, long total) {
+        int ans = JOptionPane.showOptionDialog(this,
+                "Tìm thấy bản dở của \"" + name + "\": " + humanSize(have) + " / " + humanSize(total)
+                        + ".\nBạn muốn làm gì?",
+                title, JOptionPane.DEFAULT_OPTION, JOptionPane.QUESTION_MESSAGE, null,
+                new Object[]{"Tiếp tục", "Tải lại từ đầu", "Hủy"}, "Tiếp tục");
+        return ans == JOptionPane.CLOSED_OPTION ? 2 : ans;
+    }
+
     private void doUpload() {
         JFileChooser fc = new JFileChooser();
         if (fc.showOpenDialog(this) != JFileChooser.APPROVE_OPTION) return;
         final java.io.File f = fc.getSelectedFile();
         final String remote = join(cwd, f.getName());
+        // Hỏi server trước: lần trước có tải lên dở file này không? (server bật lại vẫn còn .part trên đĩa)
+        runAsync("Đang kiểm tra bản tải lên dở...", () -> {
+            try {
+                return client.remotePartSize(remote);
+            } catch (java.io.IOException e) {
+                return 0L;                                       // 403/404...: để upload() tự báo lỗi thật
+            }
+        }, have -> {
+            int choice = 0;
+            if (have > 0 && have < f.length()) {
+                choice = askResume("Tải lên dở", f.getName(), have, f.length());
+                if (choice == 2) return;
+            }
+            startUpload(f, remote, choice == 1);
+        });
+    }
+
+    private void startUpload(final java.io.File f, final String remote, final boolean restart) {
         runAsync("Đang tải lên " + f.getName() + "...", () -> {
-            client.upload(remote, f.toPath(), progressListener());   // chú ý: (đường dẫn trên server, file nguồn, listener)
+            client.upload(remote, f.toPath(), progressListener(), restart);   // (đường dẫn trên server, file nguồn, listener, tải lại?)
             return null;
         }, ok -> { JOptionPane.showMessageDialog(this, "Tải lên xong."); doRefresh(); });
     }
@@ -207,8 +236,20 @@ public class MainFrame extends JFrame {
         if (fc.showSaveDialog(this) != JFileChooser.APPROVE_OPTION) return;
         final java.io.File target = fc.getSelectedFile();
         final String remote = join(cwd, r.name);
+        // Có file .part từ lần tải trước (mất mạng / tắt server / đóng app) thì hỏi: tiếp tục hay tải lại?
+        long have = 0;
+        try {
+            java.nio.file.Path part = FileClient.partFile(target.toPath());
+            if (java.nio.file.Files.isRegularFile(part)) have = java.nio.file.Files.size(part);
+        } catch (java.io.IOException ignored) { }
+        int choice = 0;
+        if (have > 0 && have < r.size) {
+            choice = askResume("Tải xuống dở", r.name, have, r.size);
+            if (choice == 2) return;
+        }
+        final boolean restart = choice == 1;
         runAsync("Đang tải xuống " + r.name + "...", () -> {
-            client.download(remote, target.toPath(), progressListener());  // (đường dẫn trên server, file đích, listener)
+            client.download(remote, target.toPath(), progressListener(), restart);
             return null;
         }, ok -> JOptionPane.showMessageDialog(this, "Tải xuống xong."));
     }
