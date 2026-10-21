@@ -39,7 +39,7 @@ final class CommandDispatcher {
             switch (cmd) {
                 case "LOGIN":  return login(c, f);
                 case "LOGOUT": return logout(c);
-                case "LIST": case "READ": case "WRITE": case "MKDIR": case "DELETE":
+                case "LIST": case "READ": case "WRITE": case "PARTSIZE": case "MKDIR": case "DELETE":
                     break;
                 default:
                     return err(c, cmd, "-", ErrorCode.BAD_REQUEST, "Lenh khong ho tro");
@@ -56,7 +56,7 @@ final class CommandDispatcher {
                 case "LIST" -> Permission.LIST;
                 case "READ" -> Permission.READ;
                 case "DELETE" -> Permission.DELETE;
-                default -> Permission.WRITE;     // WRITE, MKDIR
+                default -> Permission.WRITE;     // WRITE, PARTSIZE, MKDIR
             };
             if (!acl.isAllowed(c.session.userId(), vpath, need)) {
                 audit.log(c.user(), c.remote, cmd, vpath, "DENY");
@@ -67,8 +67,9 @@ final class CommandDispatcher {
             // Buoc 5-6: khoa + I/O nam trong FileService
             return switch (cmd) {
                 case "LIST" -> list(c, real, vpath);
-                case "READ" -> read(c, real, vpath);
+                case "READ" -> read(c, real, vpath, f);
                 case "WRITE" -> write(c, real, vpath, f);
+                case "PARTSIZE" -> partSize(c, real, vpath, f);
                 case "MKDIR" -> simple(c, cmd, vpath, () -> files.mkdir(real));
                 default -> simple(c, cmd, vpath, () -> files.delete(real));
             };
@@ -117,12 +118,15 @@ final class CommandDispatcher {
         return true;
     }
 
-    private boolean read(Connection c, Path real, String vpath) throws IOException {
+    /** READ path [offset]: offset = so byte client da co (tiep tuc tai xuong). Khung END mang SHA-256 cua CA file. */
+    private boolean read(Connection c, Path real, String vpath, String[] f) throws IOException {
+        long offset = parseOffset(f, 2);
         long size = files.size(real);                    // 404 / 400 neu khong phai file
+        if (offset < 0 || offset > size) return err(c, "READ", vpath, ErrorCode.BAD_REQUEST, "Offset khong hop le");
         reply(c, "OK\t" + size);
         FrameOutputStream fos = new FrameOutputStream(c.out);
         try {
-            files.read(real, fos, ChunkListener.NONE);
+            files.read(real, offset, fos, fos.hashOnly(), ChunkListener.NONE);
             fos.finish();
             audit.log(c.user(), c.remote, "READ", vpath, "OK");
         } catch (FsException e) {
@@ -133,21 +137,47 @@ final class CommandDispatcher {
         return true;
     }
 
+    /**
+     * PARTSIZE path [HASH] -> "OK\t<so byte .part dang co>" (0 = chua co gi). Can quyen WRITE nhu WRITE.
+     * Co tham so HASH -> them cot thu hai: SHA-256 cua .part ("" neu chua co) de client doi chieu voi file nguon.
+     */
+    private boolean partSize(Connection c, Path real, String vpath, String[] f) throws IOException {
+        long n = files.partSize(real);
+        boolean withHash = f.length > 2 && "HASH".equalsIgnoreCase(f[2]);
+        String sha = withHash && n > 0 ? files.partSha256(real) : "";
+        audit.log(c.user(), c.remote, "PARTSIZE", vpath, "OK");
+        reply(c, withHash ? "OK\t" + n + "\t" + sha : "OK\t" + n);
+        return true;
+    }
+
+    /** Tham so so nguyen tuy chon o vi tri idx: khong co/rong -> 0; khong phai so -> -1. */
+    private static long parseOffset(String[] f, int idx) {
+        if (f.length <= idx || f[idx].isEmpty()) return 0;
+        try { return Long.parseLong(f[idx]); }
+        catch (NumberFormatException e) { return -1; }
+    }
+
+    /** WRITE path size [offset]: offset &gt; 0 = noi tiep vao .part da co (phai dung offset byte). */
     private boolean write(Connection c, Path real, String vpath, String[] f) throws IOException {
         long size;
         try { size = Long.parseLong(f.length > 2 ? f[2] : ""); }
         catch (NumberFormatException e) { size = -1; }
         if (size < 0) return err(c, "WRITE", vpath, ErrorCode.BAD_REQUEST, "Kich thuoc khong hop le");
+        long offset = parseOffset(f, 3);
+        if (offset < 0 || offset > size) return err(c, "WRITE", vpath, ErrorCode.BAD_REQUEST, "Offset khong hop le");
         if (size > maxFileBytes) return err(c, "WRITE", vpath, ErrorCode.TOO_LARGE, "File qua lon");
+        if (offset > 0 && files.partSize(real) != offset) {   // bao loi SOM, truoc khi client gui du lieu
+            return err(c, "WRITE", vpath, ErrorCode.BAD_REQUEST, "Khong tiep tuc duoc: .part khong khop offset");
+        }
         reply(c, "OK");                                  // san sang nhan du lieu
-        FrameInputStream fin = new FrameInputStream(c.in, size);
+        FrameInputStream fin = new FrameInputStream(c.in, size - offset);
         try {
-            files.write(real, fin, size, fin::expectedSha256, ChunkListener.NONE);
+            files.write(real, fin, offset, size, fin::expectedSha256, ChunkListener.NONE);
             if (!fin.ended()) fin.drain(8192);
             audit.log(c.user(), c.remote, "WRITE", vpath, "OK");
             reply(c, "OK");
         } catch (ProtocolException | EOFException e) {
-            throw e;                                     // client hong giao thuc / ngat -> dong ket noi
+            throw e;                                     // client hong giao thuc / ngat -> dong ket noi (giu .part)
         } catch (FsException | NoSuchFileException e) {
             // Client da bat dau gui DATA: phai doc het toi khung END roi moi tra loi loi
             if (!fin.ended()) fin.drain(8192);

@@ -24,6 +24,7 @@ public final class FileServer implements AutoCloseable {
     private SSLServerSocket serverSocket;
     private ExecutorService pool;
     private Thread acceptThread;
+    private final java.util.Set<Socket> open = java.util.concurrent.ConcurrentHashMap.newKeySet();
 
     public FileServer(Config cfg, AuthService auth, AclService acl, PathSandbox sandbox,
                       FileService files, AuditLogger audit) {
@@ -47,7 +48,11 @@ public final class FileServer implements AutoCloseable {
             try {
                 Socket s = serverSocket.accept();
                 s.setSoTimeout(cfg.idleTimeoutMs());
-                pool.execute(new ClientHandler(s, dispatcher, auth));     // handshake dien ra trong thread cua handler
+                open.add(s);
+                ClientHandler h = new ClientHandler(s, dispatcher, auth);
+                pool.execute(() -> {                                      // handshake dien ra trong thread cua handler
+                    try { h.run(); } finally { open.remove(s); }
+                });
             } catch (SocketException e) {
                 break;                                                    // serverSocket da dong
             } catch (IOException e) {
@@ -58,6 +63,9 @@ public final class FileServer implements AutoCloseable {
 
     @Override public void close() throws Exception {
         if (serverSocket != null) serverSocket.close();
+        for (Socket s : open) {                                       // tat server = cat het ket noi (giong that); .part van duoc giu
+            try { s.close(); } catch (IOException ignored) { }
+        }
         if (pool != null) { pool.shutdownNow(); pool.awaitTermination(3, TimeUnit.SECONDS); }
         audit.close();
     }
