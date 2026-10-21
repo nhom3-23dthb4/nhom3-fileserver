@@ -20,9 +20,29 @@ public final class FrameOutputStream extends OutputStream {
     private int n;
 
     public FrameOutputStream(DataOutputStream out) {
+        this(out, newSha256());
+    }
+
+    /** {@code seed} da chua SHA-256 cua phan dau file khong gui lai (resume): khung END se mang SHA cua CA file. */
+    public FrameOutputStream(DataOutputStream out, MessageDigest seed) {
         this.out = out;
-        try { this.md = MessageDigest.getInstance("SHA-256"); }
+        this.md = seed;
+    }
+
+    public static MessageDigest newSha256() {
+        try { return MessageDigest.getInstance("SHA-256"); }
         catch (NoSuchAlgorithmException e) { throw new IllegalStateException(e); }
+    }
+
+    /**
+     * Stream chi cap nhat SHA-256, KHONG gui khung nao. Ghi phan dau file (da bo qua khi resume) vao day
+     * TRUOC khi ghi bat ky byte nao vao stream chinh, de thu tu bam dung.
+     */
+    public OutputStream hashOnly() {
+        return new OutputStream() {
+            @Override public void write(int b) { md.update((byte) b); }
+            @Override public void write(byte[] b, int off, int len) { md.update(b, off, len); }
+        };
     }
 
     @Override public void write(int b) throws IOException {
