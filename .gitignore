@@ -21,3 +21,5 @@ storage-root/
 nbproject/private/
 nb-configuration.xml
 config/
+nbactions.xml
+*.part
